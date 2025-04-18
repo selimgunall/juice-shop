@@ -1,0 +1,74 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  devsecops:
+    runs-on: ubuntu-latest
+    name: Run DevSecOps Checks
+
+    services:
+      juice-shop:
+        image: bkimminich/juice-shop
+        ports:
+          - 3000:3000
+        options: >-
+          --health-cmd "curl -f http://localhost:3000 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm install
+
+      # Gitleaks Scan
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: "--report-format sarif --report-path gitleaks.sarif"
+
+      # Semgrep Scan
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: "p/owasp-top-ten"
+          output: "semgrep.sarif"
+
+      # Build Docker Image
+      - name: Build Docker Image for Juice Shop
+        run: docker build -t juice-shop .
+
+      # Syft SBOM Generation
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Generate SBOM
+        run: syft juice-shop -o json > sbom.json
+
+      # OWASP ZAP Scan
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          docker run -t --network host -v $(pwd):/zap/wrk/:rw owasp/zap2docker-stable zap-baseline.py \
+            -t http://localhost:3000 -r zap-report.html || true
+
+      # Upload Artifacts
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            gitleaks.sarif
+            semgrep.sarif
+            sbom.json
+            zap-report.html

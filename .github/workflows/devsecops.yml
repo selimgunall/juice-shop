@@ -9,17 +9,6 @@ jobs:
   devsecops:
     runs-on: ubuntu-latest
 
-    services:
-      juice-shop:
-        image: bkimminich/juice-shop
-        ports:
-          - 3000:3000
-        options: >-
-          --health-cmd "curl --fail http://localhost:3000 || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -37,28 +26,34 @@ jobs:
           config: "p/owasp-top-ten"
           output: "semgrep.sarif"
 
-      ### 📦 Build Docker image for SBOM
-      - name: Build Docker Image
-        run: docker build -t juice-shop .
+      ### 🧱 Start Juice Shop in Background
+      - name: Start Juice Shop
+        run: |
+          docker run -d -p 3000:3000 --name juice-shop bkimminich/juice-shop
+          echo "Waiting for Juice Shop to start..."
+          sleep 30
 
-      ### 📄 Generate SBOM with Syft
+      ### 📄 Syft SBOM Generation
       - name: Install Syft
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 
-      - name: Run Syft SBOM
+      - name: Build Juice Shop Image
+        run: docker build -t juice-shop .
+
+      - name: Generate SBOM
         run: syft juice-shop:latest -o json > sbom.json
 
       ### 🕷 OWASP ZAP DAST Scan
       - name: Run OWASP ZAP Baseline Scan
         run: |
-          docker run -t --network host \
-            -v $(pwd):/zap/wrk/:rw \
+          docker run --rm -v $(pwd):/zap/wrk/:rw \
+            --network="host" \
             owasp/zap2docker-stable zap-baseline.py \
             -t http://localhost:3000 -r zap-report.html || true
 
-      ### 📤 Upload All Security Reports
-      - name: Upload Reports
+      ### 📤 Upload Reports
+      - name: Upload Security Reports
         uses: actions/upload-artifact@v4
         with:
           name: security-reports

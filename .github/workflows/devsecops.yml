@@ -16,9 +16,10 @@ jobs:
       ### 🔐 Gitleaks
       - name: Run Gitleaks (non-blocking)
         uses: gitleaks/gitleaks-action@v2
-         with:
+        with:
           args: "--source . --report-format sarif --report-path gitleaks.sarif"
-         continue-on-error: true
+        continue-on-error: true
+
 
       ### 🔍 Semgrep
       - name: Run Semgrep

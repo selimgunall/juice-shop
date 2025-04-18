@@ -1,4 +1,4 @@
-name: DevSecOps Debug
+name: DevSecOps Full Scan
 
 on:
   push:
@@ -9,24 +9,61 @@ jobs:
   devsecops:
     runs-on: ubuntu-latest
 
+    services:
+      juice-shop:
+        image: bkimminich/juice-shop
+        ports:
+          - 3000:3000
+        options: >-
+          --health-cmd "curl --fail http://localhost:3000 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      ### 🔐 Gitleaks
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         with:
           args: "--source . --report-format sarif --report-path gitleaks.sarif"
 
+      ### 🔍 Semgrep
       - name: Run Semgrep
         uses: returntocorp/semgrep-action@v1
         with:
           config: "p/owasp-top-ten"
           output: "semgrep.sarif"
 
-      - name: Upload reports
+      ### 📦 Build Docker image for SBOM
+      - name: Build Docker Image
+        run: docker build -t juice-shop .
+
+      ### 📄 Generate SBOM with Syft
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run Syft SBOM
+        run: syft juice-shop:latest -o json > sbom.json
+
+      ### 🕷 OWASP ZAP DAST Scan
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          docker run -t --network host \
+            -v $(pwd):/zap/wrk/:rw \
+            owasp/zap2docker-stable zap-baseline.py \
+            -t http://localhost:3000 -r zap-report.html || true
+
+      ### 📤 Upload All Security Reports
+      - name: Upload Reports
         uses: actions/upload-artifact@v4
         with:
-          name: debug-reports
+          name: security-reports
           path: |
-            gitleaks.s
+            gitleaks.sarif
+            semgrep.sarif
+            sbom.json
+            zap-report.html
